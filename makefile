@@ -1,5 +1,5 @@
 
-CFLAGS = -g -std=gnu99 -Wall -Wno-missing-braces
+CFLAGS = -g -std=gnu99 -Wall -Wno-missing-braces -m64
 
 
 EXEC = cgmemtime testa

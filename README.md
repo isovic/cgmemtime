@@ -1,6 +1,10 @@
 cgmemtime measures the high-water RSS+CACHE memory usage of a process
 and its descendant processes.
 
+This is a fork from https://github.com/gsauthof/cgmemtime.  
+These two versions are almost identical, with the difference that this one provides a commandline option '-o' to output the measurements to a human readible file.
+\\  
+
 To be able to do so it puts the process into its own
 [cgroup][cg].
 

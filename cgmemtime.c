@@ -21,6 +21,9 @@ struct Options {
   bool help;
   bool machine_readable;
   bool force_empty;
+  bool output_to_file;
+//  char *out_path;
+  FILE *outFp;
 
   bool setup_mode;
   char user[32];
@@ -55,7 +58,9 @@ static void init_options(Options *opts)
     .perm = "755",
 
     .cgfs_base = "/sys/fs/cgroup",
-    .cgfs_top = "memory/cgmemtime"
+    .cgfs_top = "memory/cgmemtime",
+    .outFp = NULL,
+    .output_to_file = false
   };
 }
 
@@ -64,7 +69,7 @@ static int parse_options(int argc, char **argv, Options *opts)
   init_options(opts);
 
   int i = 1;
-  enum Base { NONE, BASE, ROOT, USER, GROUP, PERM};
+  enum Base { NONE, BASE, ROOT, USER, GROUP, PERM, OUTPATH};
   enum Base next = NONE;
   for (; i<argc; ++i) {
     const char *o = argv[i];
@@ -85,6 +90,8 @@ static int parse_options(int argc, char **argv, Options *opts)
         case PERM:
           strncpy(opts->perm, o, 4);
           break;
+	case OUTPATH:
+	  opts->outFp = fopen(o, "w");
         default:
           break;
       }
@@ -95,6 +102,9 @@ static int parse_options(int argc, char **argv, Options *opts)
       opts->help = true;
     } else if (!strcmp(o, "-t") || !strcmp(o, "--tabular")) {
       opts->machine_readable = true;
+    } else if (!strcmp(o, "-o")) {
+      opts->output_to_file = true;
+      next = OUTPATH;
     } else if (!strcmp(o, "--base")) {
       next = BASE;
     } else if (!strcmp(o, "--root")) {
@@ -137,6 +147,7 @@ static void help(const char *prog)
       "\n"
       "Options:\n"
       "\t-h, --help\tthis screen\n"
+      "\t-o, STR   \twrite output to a file\n"
       "\t-t, --tabular\tmachine readable output\n"
       "\t--base STR\tbase of cgroup fs (default: /sys/fs/cgroup)\n"
       "\t--root STR\troot of the configured hierachy (default: memory/cgmemtime)\n"
@@ -400,12 +411,12 @@ static int pretty_print(const Output *out)
   fprintf(stderr, "Child wall: ");
   print_timeval(stderr, &out->child_wall);
   fprintf(stderr, "\n");
-  fprintf(stderr, "Child high-water RSS                    : %10zu KiB\n",
+  fprintf(stderr, "Child high-water RSS                    : %ld KiB\n",
       out->child_rss_highwater/1024
       );
-  fprintf(stderr, "Recursive and acc. high-water RSS+CACHE : %10zu KiB\n",
-      out->cg_rss_highwater/1024
-      );
+//   fprintf(stderr, "Recursive and acc. high-water RSS+CACHE : %ld KiB\n",
+//       out->cg_rss_highwater/1024
+//       );
   return 0;
 }
 
@@ -417,7 +428,7 @@ static int machine_print(const Output *out)
   fprintf(stderr, ";");
   print_timeval_m(stderr, &out->child_wall);
   fprintf(stderr, ";");
-  fprintf(stderr, "%zu;%zu",
+  fprintf(stderr, "%ld;%ld",
       out->child_rss_highwater/1024,
       out->cg_rss_highwater/1024
       );
@@ -425,12 +436,57 @@ static int machine_print(const Output *out)
   return 0;
 }
 
-static void print(const Options *opts, const Output *output)
+static int benchmark_print(const Output *out, FILE *fp, int argc, char **argv)
+{
+  if (fp != NULL)
+  {
+	double cpuTime = (double) out->child_user.tv_sec + (double)out->child_user.tv_usec / (1000.0 * 1000.0) +
+			 (double) out->child_sys.tv_sec + (double)out->child_sys.tv_usec / (1000.0 * 1000.0);
+	double userTime = (double) out->child_user.tv_sec + (double)out->child_user.tv_usec / (1000.0 * 1000.0);
+	double systemTime = (double) out->child_sys.tv_sec + (double)out->child_sys.tv_usec / (1000.0 * 1000.0);
+	
+	fprintf (fp, "Command line: ");
+	for (int i=0; i<argc; i++) {
+		fprintf (fp, "%s", argv[i]);
+		if ((i + 1) < argc)
+			fprintf (fp, " ");
+	}
+	fprintf (fp, "\n");
+	
+	fprintf(fp, "Real time: ");
+	print_timeval(fp, &out->child_wall);
+	fprintf(fp, "\n");
+	
+	fprintf(fp, "CPU time: %8.3f s\n", cpuTime);
+	fprintf(fp, "User time: %8.3f s\n", userTime);
+	fprintf(fp, "System time: %8.3f s\n", systemTime);
+	
+	fprintf(fp, "Maximum RSS: %ld MB\n", out->child_rss_highwater/(1024*1024));
+// 	fprintf(fp, "Recursive and acc. high-water RSS+CACHE : %ld MB\n", out->cg_rss_highwater/(1024*1024));	
+	
+// 	fprintf(fp, "Average CPU percent: 0 %c\n", '%');
+// 	fprintf(fp, "Time of maximum RSS: 0.0\n");
+// 	fprintf(fp, "Maximum PSS: 0 MB\n");
+// 	fprintf(fp, "Time of maximum PSS: 0.0\n");
+// 	fprintf(fp, "Maximum VmSize: 0 MB\n");
+// 	fprintf(fp, "Time of maximum VmSize: 0.0\n");
+// 	fprintf(fp, "Compact results: \n");
+	
+	return 0;
+  }
+
+  return 1;
+}
+
+static void print(const Options *opts, const Output *output, int argc, char **argv)
 {
   if (opts->machine_readable)
     machine_print(output);
   else
     pretty_print(output);
+  
+  if (opts->output_to_file)
+	benchmark_print(output, opts->outFp, argc, argv);
 }
 
 static int verify_tasks_empty(const Options *opts)
@@ -537,12 +593,24 @@ int main(int argc, char **argv)
     return 24;
   if (opts.help) {
     help(*argv);
+    
+    if (opts.outFp)
+    {
+	fclose(opts.outFp);
+    }
+	
     return 0;
   }
   if (opts.setup_mode) {
     ret = setup_root(&opts);
     if (ret)
       return 25;
+    
+    if (opts.outFp)
+    {
+	fclose(opts.outFp);
+    }
+    
     return 0;
   }
   ret = setup_cg(&opts);
@@ -555,13 +623,19 @@ int main(int argc, char **argv)
   int r = cleanup_cg(&opts);
   ret2 = ret2 || r;
   if (ret >= 0) {
-    print(&opts, &output);
+    print(&opts, &output, argc, argv);
     if (!ret && ret2)
       return 27;
     return ret;
   }
   if (ret || ret2)
     return 28;
+
+  if (opts.outFp)
+  {
+	fclose(opts.outFp);
+  }
+
   return 0;
 }
 
