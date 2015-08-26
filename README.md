@@ -1,3 +1,5 @@
+Edit: In case you get an error such as "/sys/fs/cgroup/memory/cgmemtime: No such file or directory", it means either that you need to install 'cgroup-bin' (e.g. sudo apt-get install cgroup-bin), or that the path /sys/fs/cgroup/memory has wrong permissions. In the latter case, change the permission of the folder to 777.  
+  
 cgmemtime measures the high-water RSS+CACHE memory usage of a process
 and its descendant processes.
 
